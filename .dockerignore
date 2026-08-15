@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+*.pem
+*.key
+README.pdf
+test_app.py
+

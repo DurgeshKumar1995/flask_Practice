@@ -1,0 +1,124 @@
+name: Student Registration CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'student-registration' }}
+  APP_CONTAINER: student-registration-app
+  FAILED_STAGE: checkout
+
+jobs:
+  test-build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1 - Checkout
+        uses: actions/checkout@v4
+
+      - name: 2 - Install dependencies
+        run: |
+          echo "FAILED_STAGE=install" >> "$GITHUB_ENV"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start MongoDB for tests
+        run: |
+          docker run -d --name mongodb-test -p 27017:27017 mongo:7
+          for attempt in {1..30}; do
+            docker exec mongodb-test mongosh --quiet --eval "db.adminCommand('ping').ok" && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: 3 - Test
+        env:
+          MONGO_URI: mongodb://localhost:27017/test_student_db
+          SECRET_KEY: test-only-secret
+        run: |
+          echo "FAILED_STAGE=test" >> "$GITHUB_ENV"
+          pytest -q
+
+      - name: Configure AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "FAILED_STAGE=push" >> "$GITHUB_ENV"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"
+
+      - name: Resolve immutable image URI
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$GITHUB_SHA"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: 4 - Build image tagged with commit SHA
+        run: |
+          echo "FAILED_STAGE=build" >> "$GITHUB_ENV"
+          docker build --tag "$IMAGE_URI" .
+
+      - name: 5 - Push image to Amazon ECR
+        run: |
+          echo "FAILED_STAGE=push" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "${IMAGE_URI%%/*}"
+          docker push "$IMAGE_URI"
+
+      - name: Prepare SSH key
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          echo "FAILED_STAGE=deploy" >> "$GITHUB_ENV"
+          install -m 700 -d "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/ssh/deploy_key"
+          chmod 600 "$RUNNER_TEMP/ssh/deploy_key"
+
+      - name: 6 - Replace running container on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+        run: |
+          echo "FAILED_STAGE=deploy" >> "$GITHUB_ENV"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            -i "$RUNNER_TEMP/ssh/deploy_key" "$EC2_USER@$EC2_HOST" \
+            "set -e; aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '${IMAGE_URI%%/*}'; docker pull '$IMAGE_URI'; docker stop '$APP_CONTAINER' >/dev/null 2>&1 || true; docker rm '$APP_CONTAINER' >/dev/null 2>&1 || true; docker run -d --name '$APP_CONTAINER' --restart unless-stopped --env-file /opt/student-registration/app.env -p 5000:5000 '$IMAGE_URI'"
+
+      - name: 7 - Verify deployment health
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+        run: |
+          echo "FAILED_STAGE=verify" >> "$GITHUB_ENV"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            -i "$RUNNER_TEMP/ssh/deploy_key" "$EC2_USER@$EC2_HOST" \
+            "for attempt in \$(seq 1 30); do curl -fsS http://localhost:5000/health && exit 0; sleep 2; done; docker logs '$APP_CONTAINER'; exit 1"
+
+      - name: 8 - Send customized result email
+        if: always()
+        env:
+          PIPELINE_OUTCOME: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          DEPLOY_TARGET: ${{ secrets.EC2_HOST }}
+          PIPELINE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURITY: ${{ vars.SMTP_SECURITY || 'starttls' }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+        run: python scripts/send_notification.py

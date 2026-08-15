@@ -7,12 +7,11 @@
 </head>
 <body class="container mt-5">
     <h1 class="mb-4 text-center">Student Registration System</h1>
-
     <div class="mb-3">
         <a href="{{ url_for('index') }}" class="btn btn-primary">Home</a>
         <a href="{{ url_for('add_student') }}" class="btn btn-success">Add Student</a>
     </div>
-
     {% block content %}{% endblock %}
 </body>
 </html>
+

@@ -2,14 +2,7 @@
 
 {% block content %}
 <table class="table table-bordered">
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Course</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
+    <thead><tr><th>Name</th><th>Email</th><th>Course</th><th>Actions</th></tr></thead>
     <tbody>
     {% for student in students %}
         <tr>
@@ -25,3 +18,4 @@
     </tbody>
 </table>
 {% endblock %}
+
