@@ -30,8 +30,7 @@ After success:
 
 - Application: <http://localhost:5000>
 - Health gate: <http://localhost:5000/health>
-- Captured email: <http://localhost:8025>
-- Floci API: <http://localhost:4566>
+
 
 Stop the local infrastructure when finished:
 
