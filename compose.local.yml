@@ -1,0 +1,37 @@
+services:
+  floci:
+    image: floci/floci:latest
+    container_name: cicd-floci
+    user: root
+    ports:
+      - "4566:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cicd-local
+
+  mongodb:
+    image: mongo:7
+    container_name: cicd-mongodb
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - cicd-local
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: cicd-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - cicd-local
+
+networks:
+  cicd-local:
+    name: cicd-assign-local
