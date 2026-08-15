@@ -17,19 +17,13 @@ This repository contains the Flask/MongoDB application and one GitHub Actions pi
 - AWS CLI v2
 - Git
 
-## Run the complete local rehearsal (no AWS account)
+## Run the complete local rehearsal 
 
-Floci provides a local ECR-compatible registry and local AWS APIs. The script performs the same gates locally: install, test, commit-SHA image build, push to Floci ECR, replace the app container, poll `/health`, and send an email to Mailpit.
-
-```bash
-chmod +x scripts/local_pipeline.sh
-./scripts/local_pipeline.sh
-```
 
 After success:
 
-- Application: <http://localhost:5000>
-- Health gate: <http://localhost:5000/health>
+- Application: <http://public-ip:5000>
+- Health gate: <http://public-ip:5000/health>
 
 
 Stop the local infrastructure when finished:
